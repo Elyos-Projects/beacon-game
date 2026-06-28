@@ -1,6 +1,6 @@
 # Beacon — TASKS.md
 
-> Status: Draft · Version: 0.1.0 · Last updated: 2026-06-28 · Owner: TBD (maintainer) · Lane: donated
+> Status: Draft · Version: 0.2.0 · Last updated: 2026-06-28 · Owner: TBD (maintainer) · Lane: donated
 
 Backlog for **Beacon** (slug: `beacon-game`), an open-source cooperative signal-tracing roguelite
 that produces consensus-verified labels on openly-licensed imagery for disaster-response and
@@ -39,7 +39,7 @@ Size legend: small ≈ tokenEstimate `small`, med ≈ `medium`, large ≈ `large
 | ID | Title | Type | Size | Risk | Deliverable | Depends on | Reviewer |
 |---|---|---|---|---|---|---|---|
 | beacon-repo-001 | Monorepo + pnpm workspaces + CI (build/test/lint) | code | small | low | pr | — | Maintainer |
-| beacon-protocol-002 | `@beacon/protocol` shared types + schemas (TileTask/Judgment/LabelRecord/Provenance) | code | medium | low | pr | beacon-repo-001 | Maintainer |
+| beacon-protocol-002 | `@beacon/protocol` shared types + schemas (TileTask/Judgment/LabelRecord/Provenance + contentHash/signature + RetractionRecord) | code | medium | low | pr | beacon-repo-001 | Maintainer |
 | beacon-engine-003 | Deterministic core run loop + grid on synthetic tiles (headless-testable) | code | large | low | pr | beacon-protocol-002 | Maintainer |
 | beacon-consensus-004 | `@beacon/consensus` library + hard ship-gate invariant test | code | medium | medium | pr | beacon-protocol-002 | Data/ethics reviewer |
 | beacon-charter-005 | No-Dark-Patterns design charter + audit checklist | writing | small | low | document | beacon-repo-001 | Design reviewer |
@@ -96,28 +96,49 @@ passed on all M1 PRs.
 
 | ID | Title | Type | Size | Risk | Deliverable | Depends on | Reviewer |
 |---|---|---|---|---|---|---|---|
-| beacon-backend-010 | `@beacon/backend` judgment ingestion + calibration salting (server-side gold) | code | large | medium | pr | beacon-consensus-004 | Data/ethics reviewer |
+| beacon-backend-010 | `@beacon/backend` judgment ingestion service + per-contributor tile sharding + rate limiting | code | medium | medium | pr | beacon-consensus-004 | Data/ethics reviewer |
+| beacon-calibration-026 | Server-side gold pool + calibration salting & lifecycle (anti-memorization across shared seed) | code | medium | medium | pr | beacon-backend-010, beacon-consensus-004 | Data/ethics reviewer |
+| beacon-anticheat-027 | Anti-cheat/Sybil defenses + pre-export red-team gate (blocking) | code | medium | medium | pr | beacon-backend-010, beacon-calibration-026 | Data/ethics reviewer |
 | beacon-dataset-011 | Source & license/provenance vetting for first openly-licensed dataset | data | medium | medium | dataset | beacon-protocol-002 | Data/ethics reviewer |
-| beacon-adapter-012 | First real `@beacon/adapter-*` (fetch/normalize/provenance/export) | code | large | medium | pr | beacon-backend-010, beacon-dataset-011 | Data/ethics reviewer |
-| beacon-export-013 | Label export with provenance + CC-BY-SA packaging | code | medium | medium | dataset | beacon-adapter-012 | Data/ethics reviewer |
+| beacon-adapter-012 | First real `@beacon/adapter-*` — fetch + normalize to `TileTask` | code | medium | medium | pr | beacon-dataset-011, beacon-protocol-002 | Data/ethics reviewer |
+| beacon-adapter-028 | Adapter provenance attachment + export-back-to-partner path | code | medium | medium | pr | beacon-adapter-012, beacon-export-013 | Data/ethics reviewer |
+| beacon-export-013 | Label export w/ provenance, content-hash + signature, CC-BY-SA packaging (gated by anti-cheat) | code | medium | medium | dataset | beacon-adapter-012, beacon-calibration-026, beacon-anticheat-027 | Data/ethics reviewer |
 
 **Acceptance criteria — key tasks**
 
-- **beacon-backend-010** (backend + calibration salting)
-  - Ingests judgments; gold answers held **server-side only**, never sent to the client.
-  - Salts calibration tiles invisibly into runs; updates per-contributor reliability weight.
-  - Rate-limiting + basic anomaly detection guard against coordinated/bot voting.
+- **beacon-backend-010** (ingestion service)
+  - Ingests judgments via REST/WS; persists to datastore; never trusts client-reported correctness.
+  - **Per-contributor tile sharding:** assigns each contributor an independent server-side subset
+    of real tiles; only the cosmetic daily seed is shared, the labeling assignment is not.
+  - Ephemeral-IP rate-limiting; no PII persisted.
+- **beacon-calibration-026** (gold pool + calibration salting)
+  - Gold answers held **server-side only**, never sent to the client; salting rate ~15% with
+    ~2–4 gold tiles per run; each gold tile records its answer provenance.
+  - **Anti-memorization:** gold drawn from a large rotating pool, assigned per-contributor
+    independent of the shared daily seed, never repeated within a window, retired on exposure.
+  - Updates per-contributor rolling reliability weight from gold outcomes.
+- **beacon-anticheat-027** (Sybil/anti-cheat gate — blocking)
+  - **Calibration burn-in:** a new contributor carries **zero** consensus weight until clearing a
+    minimum gold count at a minimum accuracy.
+  - **New-contributor weight discount** ramps weight up with sustained accurate volume.
+  - **Coordinated-voting detection** flags correlated/same-shard/same-network clusters → routes to
+    adjudication and quarantines implicated contributors from the weight pool.
+  - Red-team test suite passes; **gate must be green before `beacon-export-013` ships any label.**
 - **beacon-dataset-011** (dataset vetting)
   - License confirmed to permit reuse **and derivative labeling**; recorded in repo.
   - Verified free of identifiable private individuals; provenance documented.
   - Data/ethics reviewer sign-off recorded before the dataset is enabled.
 - **beacon-export-013** (label export)
-  - Only threshold-passing labels exported; each carries complete provenance + CC-BY-SA license.
+  - Only threshold-passing labels exported; each carries complete provenance + CC-BY-SA license +
+    **`contentHash` + `signature`** for tamper-evidence.
+  - Supports signed, append-only **`RetractionRecord`** (correction/retraction) and a
+    **re-export reconciliation** flow that diffs a re-pulled batch by `contentHash`.
   - Append-only audit log of shipped labels with the consensus parameters used.
 
 **M2 Definition of Done:** real openly-licensed imagery flows end-to-end; calibration + consensus
-live; dataset license/provenance review signed off; **no label exported below threshold** (test-
-verified); exportable label package produced (not yet partner-accepted).
+live; **anti-cheat/Sybil gate green before export**; dataset license/provenance review signed off;
+**no label exported below threshold** (test-verified); exportable label package produced (with
+integrity hashes/signatures; not yet partner-accepted).
 
 ---
 
@@ -147,15 +168,19 @@ audit passes on all new systems; impact receipt MVP reflects real exported label
 
 | ID | Title | Type | Size | Risk | Deliverable | Depends on | Reviewer |
 |---|---|---|---|---|---|---|---|
-| beacon-partner-017 | Secure data partner + data-use agreement + threshold tuning | research | medium | medium | document | beacon-export-013 | Steward |
+| beacon-partner-017 | Secure data partner + data-use agreement + threshold tuning | research | medium | medium | document | — (run in parallel from M0) | Steward |
 | beacon-handoff-018 | First verified-label batch formally accepted by partner | data | medium | medium | dataset | beacon-partner-017, beacon-impact-016 | Steward + Data/ethics reviewer |
 
 **Acceptance criteria — key tasks**
 
-- **beacon-partner-017** (secure partner)
-  - A real disaster-response or biodiversity partner signs a data-use agreement.
+- **beacon-partner-017** (secure partner — **runs in parallel from M0**, not gated behind M2)
+  - "Secured" requires **all three**: signed **DUA** (from the DUA template), a **named
+    accountable partner contact**, and a passing **acceptance test** on a sample label batch.
   - Per-dataset thresholds (min judgments, min weighted agreement, min calibration weight) set
-    jointly and recorded.
+    jointly and recorded; provisional defaults (N ≥ 5, weighted agreement ≥ 0.8) are
+    partner-overridable.
+  - **Fallback** if no partner is secured: self-publish labels CC-BY-SA + commission an external
+    spot-check (does not satisfy Definition of Shipped).
 - **beacon-handoff-018** (closed loop)
   - A verified-label batch is delivered and **formally accepted** by the partner.
   - Provenance + CC-BY-SA license published; impact receipt reflects the accepted batch.
@@ -192,7 +217,7 @@ owning it after the first delivery.
 | beacon-adapter-021 | Second dataset adapter (other domain than first) | code | large | medium | pr | Proves pluggability across domains |
 | beacon-i18n-022 | Internationalization + community translations | writing | medium | low | translation | i18n-ready strings already in engine |
 | beacon-pwa-023 | PWA / offline play packaging | code | medium | low | pr | Web-first; no native app |
-| beacon-adversarial-024 | Adversarial-labeling red-team + detection hardening | research | medium | medium | document | Stress consensus + calibration defenses |
+| beacon-adversarial-024 | Adversarial-labeling red-team + detection hardening | research | medium | medium | document | Post-M2 hardening that extends the M2 anti-cheat gate (beacon-anticheat-027); stress consensus + calibration defenses |
 | beacon-edu-025 | Educational "behind the labels" mode (open-science literacy) | code | small | low | pr | Secondary education benefit |
 
 ---

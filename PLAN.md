@@ -1,6 +1,6 @@
 # Beacon — PLAN.md
 
-> Status: Draft · Version: 0.1.0 · Last updated: 2026-06-28 · Owner: TBD (maintainer) · Lane: donated
+> Status: Draft · Version: 0.2.0 · Last updated: 2026-06-28 · Owner: TBD (maintainer) · Lane: donated
 
 ## Executive summary
 
@@ -89,6 +89,7 @@ to be re-baselined after M1 telemetry.
 | Quality safety | Labels shipped below threshold | 0 | **0 (hard invariant)** |
 | Calibration health | Median contributor calibration accuracy on salted tiles | n/a | ≥ 0.9 among scored contributions |
 | Ethical design integrity | Dark-pattern audit findings unresolved at release | n/a | **0** |
+| Labeling invisible to play feel | Blind-playtest players who report it felt like pure play (did not experience it as "doing work"/labeling) | n/a | ≥ 80% (measured at the M1 playtest; gates M1 exit) |
 | Genuine engagement (not maximized) | D1 return of players who *chose* to come back | 0 | report honestly; no target that incentivizes manipulation |
 | Accessibility | WCAG 2.2 AA conformance on core loop | none | AA on core loop + colorblind-safe judgments |
 | Openness | Reproducible build + published label provenance | none | 100% of shipped labels carry provenance + license |
@@ -182,24 +183,56 @@ Three cleanly separated layers, mirroring Elyos's agent-neutral-core discipline:
 - **`CalibrationOutcome`**: derived per contributor — rolling accuracy on salted gold tiles →
   a **reliability weight** used in consensus.
 - **`LabelRecord`**: `tileTaskId`, `aggregatedChoice`, `confidence`, `nJudgments`,
-  `nAgreeing`, `weightedAgreement`, `shipped` (bool), `shippedAt?`, `provenance`, `licenseId`.
+  `nAgreeing`, `weightedAgreement`, `shipped` (bool), `shippedAt?`, `provenance`, `licenseId`,
+  plus **export-integrity fields**: `contentHash` (canonicalized hash of the record's
+  consensus-bearing fields) and `signature` (backend export-key signature over `contentHash`) so
+  any post-export tampering is detectable by the partner.
 - **`ProvenanceRecord`**: dataset source, license, acquisition method, partner, transformation
-  log — travels with every exported label.
+  log — plus `contentHash` + `signature` — travels with every exported label.
+- **`RetractionRecord`** (correction/retraction type): references a prior `LabelRecord` by id +
+  `contentHash`, gives a reason (e.g. consensus reversal, source license withdrawal, gold-pool
+  error), an `action` (`retract | correct`), the corrected value if any, and is itself
+  hashed + signed. Retractions are append-only and drive the re-export reconciliation flow
+  (see Security & privacy).
 
 ### Consensus aggregation (the trust core)
 
-1. **Calibration salting:** the backend invisibly mixes known-answer gold tiles into each run.
-   The client cannot distinguish them. Misjudging a gold tile ends the run (gameplay) *and*
-   updates the contributor's rolling reliability weight (quality).
-2. **Weighted consensus:** each real tile is judged by N independent contributors. Aggregate by
+1. **Calibration salting (mechanics + lifecycle):** the backend invisibly mixes known-answer
+   gold tiles into each run. The client cannot distinguish them. Misjudging a gold tile ends the
+   run (gameplay) *and* updates the contributor's rolling reliability weight (quality).
+   Provisional mechanics (partner-tunable per dataset):
+   - **Salting rate ~15%** of judgments are gold (≈ 1 in 7), enough to estimate per-contributor
+     accuracy within a session without dominating play. **Target 2–4 gold tiles per run.**
+   - **Answer sourcing:** gold answers come from partner/expert-adjudicated ground truth or from
+     already-shipped high-confidence consensus labels promoted into the gold pool; each gold tile
+     records its answer provenance.
+   - **Anti-memorization across the shared daily seed:** because all players share a daily seed,
+     a fixed gold set would be learnable. Gold tiles are therefore drawn from a large rotating
+     pool, **assigned per-contributor (not via the shared seed)**, never repeated to the same
+     contributor within a window, and retired/rotated once their exposure or answer-leak risk
+     crosses a threshold. Gold selection and ordering use a server-side per-contributor stream
+     independent of the cosmetic daily seed.
+2. **Per-contributor tile sharding (independence vs. shared seed):** the *labeling* layer assigns
+   each contributor a sharded/randomized subset of real tiles drawn server-side, so two players
+   on the same daily board do not judge an identical labeling sequence. Only **cosmetic** board
+   elements (visual layout, theme, combo set-piece) are shared by the daily seed; the underlying
+   tile→contributor assignment is independent. This preserves "everyone plays today's board"
+   feel while keeping consensus votes genuinely independent (see Key decisions).
+3. **Weighted consensus:** each real tile is judged by N independent contributors. Aggregate by
    reliability-weighted vote (start with weighted majority; design allows upgrade to a
    Dawid–Skene / EM estimator as data grows). Compute `weightedAgreement` and `confidence`.
-3. **Hard ship gate:** a label is exported **only if** it meets *all* configured thresholds —
-   minimum independent judgments (e.g. ≥ 5), minimum weighted agreement (e.g. ≥ 0.8), and the
-   contributors clearing a minimum calibration weight. Thresholds are partner-tunable per
-   dataset and recorded with the label. **Below threshold ⇒ never shipped** (enforced invariant
-   with a test that fails the build if violated).
-4. **Adjudication queue:** contentious tiles (split consensus) route to an extended judgment pool
+4. **Hard ship gate (provisional thresholds, with reasoning):** a label is exported **only if**
+   it meets *all* configured thresholds — minimum independent judgments **≥ 5**, minimum
+   **weighted agreement ≥ 0.8**, and contributors clearing a minimum calibration weight.
+   *Statistical reasoning (binary tile, provisional):* at **N = 5** with a per-contributor error
+   rate of ~0.2, requiring ≥ 0.8 weighted agreement (≥ 4 of 5 effectively concurring) bounds the
+   probability of certifying a wrong majority at roughly **P(≥4 of 5 wrong) ≈ 6.7×10⁻³**, i.e. a
+   sub-1% false-positive rate per shipped label before calibration weighting (which lowers it
+   further). This makes the ≥ 95% audited-agreement target testable rather than aspirational; if
+   measured agreement undershoots, N and the agreement floor are raised. Thresholds are
+   **partner-overridable** per dataset and recorded with the label. **Below threshold ⇒ never
+   shipped** (enforced invariant with a test that fails the build if violated).
+5. **Adjudication queue:** contentious tiles (split consensus) route to an extended judgment pool
    and, if still split, to partner/expert review — never auto-shipped.
 
 ### Key decisions
@@ -207,6 +240,11 @@ Three cleanly separated layers, mirroring Elyos's agent-neutral-core discipline:
 - **Local-first, anonymous-by-default.** Daily seed and meta-progression work without an account;
   the server is needed only for global consensus and leaderboards. This is both a privacy stance
   and a dark-pattern guard (no account funnel).
+- **Shared cosmetics, sharded labels.** The daily global seed governs only the *cosmetic*,
+  shared-experience layer (visual board, theme, set-pieces); the *labeling* layer assigns each
+  contributor an independent, server-sharded subset of real and gold tiles. This deliberately
+  resolves the otherwise-contradictory goals of "everyone plays the same daily board" and
+  "consensus votes must be independent" (see Consensus aggregation).
 - **Deterministic, headless-testable simulation** separated from rendering — lets AI sessions and
   CI validate gameplay and consensus logic without a browser.
 - **Pluggable adapters** keep dataset/partner specifics out of the engine and backend core,
@@ -264,7 +302,18 @@ label handoff require domain/ethics review**.)
   confirms open license permits derivatives, no identifiable individuals, provenance complete,
   thresholds appropriate. Reviewer must have relevant data/humanitarian-ethics skill.
 - **Design review (No-Dark-Patterns)** — every gameplay/monetization-adjacent change is checked
-  against the No-Dark-Patterns charter checklist; unresolved findings block release.
+  against the No-Dark-Patterns charter checklist; unresolved findings block release. Human review
+  is backed by **machine-enforceable CI invariants** that fail the build, so the charter is not
+  merely aspirational:
+  - **No FOMO/countdown timers:** static check forbids streak/expiry/"ends in" timer primitives
+    in gameplay/UX code.
+  - **No IAP/payment code paths:** ban imports of payment/billing SDKs and purchase-flow symbols.
+  - **No push-notification APIs:** forbid `Notification`, Push API, and service-worker push
+    registration.
+  - **No third-party trackers:** bundle/asset scan rejects any non-allowlisted third-party
+    network domain (analytics/tracker/ad hosts) in the shipped client.
+  These invariants live in CI and are part of the charter's enforcement, not a substitute for the
+  human design review.
 - **Quality/consensus review** — the ship-gate invariant is enforced by automated tests; any
   change to thresholds or aggregation requires explicit review.
 - **Partner sign-off** — a label batch is only "delivered" when the data partner formally accepts
@@ -278,25 +327,31 @@ A merged PR alone is *not* shipped.
 ## Roadmap & milestones
 
 Each milestone has measurable exit criteria. M0 is a thin, honest foundation; partner-dependent
-value lands in M4.
+value lands in M4. **Partner-securing outreach runs in parallel starting at M0** (it is
+long-lead and must not be gated behind the M2 export), tracked as `TO BE SECURED` until the
+"secured" criteria in Dependencies are met.
 
 **M0 — Foundation & charter (cold-start).**
 Goal: prove the spine end-to-end with synthetic data and lock the ethics constraints in writing.
 Exit criteria: monorepo + `@beacon/protocol` schemas merged; deterministic core run loop playable
 in-browser on a **synthetic** tile set; `@beacon/consensus` library with the hard ship-gate +
 passing invariant test; the **No-Dark-Patterns charter** + audit checklist committed; CI green
-(build/test/lint).
+(build/test/lint). Partner-outreach kickoff begins here in parallel.
 
 **M1 — Real game feel + daily seed.**
 Goal: it's actually fun, accessible, anonymous. Exit criteria: combo/juice system; deterministic
 **daily global seed** + local leaderboard (no account); WCAG 2.2 AA on core loop incl.
-colorblind-safe judgments; headless gameplay tests; playtest feedback logged.
+colorblind-safe judgments; headless gameplay tests; playtest feedback logged, **including the
+"labeling is invisible to play feel" check — ≥ 80% of blind playtesters report it felt like pure
+play (hard M1 exit gate).**
 
 **M2 — Labeling backend + one real adapter.**
 Goal: real openly-licensed imagery flows through the loop. Exit criteria: `@beacon/backend`
 ingests judgments; one real `@beacon/adapter-*` against an openly-licensed dataset (license +
 provenance verified, **license/provenance review signed off**); calibration salting live;
-consensus produces `LabelRecord`s; **no label exported below threshold** (verified by test).
+consensus produces `LabelRecord`s; **no label exported below threshold** (verified by test);
+**anti-cheat/Sybil defenses gate passes before any export** (calibration burn-in,
+new-contributor weight discount, coordinated-voting detection).
 
 **M3 — Roguelite meta + co-op Blackout (ethical).**
 Goal: depth + cooperation without dark patterns. Exit criteria: earned-only meta-progression
@@ -307,7 +362,9 @@ players on a region; **No-Dark-Patterns audit passes** on all new systems; impac
 Goal: deliver real value. Exit criteria: **data partner secured** (data-use agreement); a real
 verified-label batch **formally accepted** by the partner; provenance + license published;
 impact receipt reflects the accepted batch; Definition of Shipped met. (Hard dependency:
-partner — `TO BE SECURED`.)
+partner — `TO BE SECURED`; if outreach fails, the self-publish CC-BY-SA + external-spot-check
+fallback in Dependencies delivers a weaker public good but does **not** meet Definition of
+Shipped.)
 
 **M5 — Sustain & scale (post-delivery).**
 Goal: keep it healthy. Exit criteria: second dataset/partner or scaled batches; ops runbook;
@@ -315,7 +372,7 @@ outcome-tracking dashboard; maintenance rotation in place.
 
 ## Work breakdown
 
-The itemized, schema-mapped backlog lives in **`TASKS.md`** — ~16 tasks across M0–M5, each
+The itemized, schema-mapped backlog lives in **`TASKS.md`** — ~22 tasks across M0–M5, each
 mappable to an Elyos Task JSON, with per-milestone task tables, acceptance criteria for the most
 important tasks, a Definition of Done per milestone, a future backlog, and a complete example
 Task JSON for the first M0 task. This section is intentionally just the pointer.
@@ -338,7 +395,17 @@ Task JSON for the first M0 task. This section is intentionally just the pointer.
 
 - **External datasets:** openly-licensed post-disaster satellite imagery and/or open biodiversity
   camera-trap sets — specific source `TO BE SECURED` with the partner.
-- **Data partner:** `TO BE SECURED` (critical path for M4).
+- **Data partner:** `TO BE SECURED` (critical path for M4). A partner counts as **"secured"**
+  only when **all** of: (a) a signed **Data-Use Agreement** (DUA template — covers license,
+  permitted derivatives, sensitive-imagery handling, attribution, retraction terms) is executed;
+  (b) a **named accountable contact** at the partner exists; and (c) an **acceptance test
+  passes** — the partner formally accepts a sample verified-label batch against agreed thresholds.
+  Until all three hold, the relationship stays `TO BE SECURED`.
+- **Fallback if no partner is secured:** self-publish the verified labels openly under **CC-BY-SA
+  4.0** with full provenance, and commission an **independent external spot-check** (domain
+  volunteer/expert) of a sample to substantiate the quality claim. This still delivers a public
+  open-data good and exercises the full loop, though it is explicitly weaker than a partner-
+  accepted handoff and does **not** by itself satisfy the project Definition of Shipped.
 - **Hosting:** static CDN/Pages for the client; small container/serverless host for the backend
   (vendor-neutral; TBD).
 - **Datastore:** SQLite (M0–M2) → Postgres (scale).
@@ -351,12 +418,14 @@ Task JSON for the first M0 task. This section is intentionally just the pointer.
 
 | Risk | Likelihood | Impact | Mitigation | Owner |
 |---|---|---|---|---|
-| No data partner secured → loop never closes (demo, not deed) | High | High | Treat partner outreach as M0-parallel critical path; design adapter interface to a generic open dataset so progress isn't blocked; label as `TO BE SECURED` everywhere | Steward |
+| No data partner secured → loop never closes (demo, not deed) | High | High | Run partner-securing **in parallel from M0** (not gated behind M2 export); define explicit "secured" criteria (DUA + named contact + acceptance test, see Dependencies); design adapter interface to a generic open dataset so progress isn't blocked; fallback to self-publish CC-BY-SA + external spot-check; label as `TO BE SECURED` everywhere | Steward |
 | Low-quality labels shipped to responders | Medium | Critical | Hard ship-gate invariant (consensus + calibration thresholds) enforced by automated test; partner sign-off before handoff; adjudication queue for splits | Data/ethics reviewer |
 | Imagery contains identifiable individuals / non-open license | Medium | Critical | License + provenance review gate per dataset; reject sets with possible bystanders; partner guidance on sensitive imagery | Data/ethics reviewer |
 | "Addictive" goal drifts into dark patterns | Medium | High | No-Dark-Patterns charter + CI/review checklist; refuse engagement-maximizing metrics as goals; design review on every relevant change | Design reviewer |
 | Adversarial/bot labeling poisons consensus | Medium | High | Calibration salting + reliability weighting; rate limiting; anomaly detection; minimum independent contributors per tile | Backend maintainer |
 | Disaster imagery is distressing to players | Medium | Medium | Content warnings, opt-in for disaster biomes, abstraction in the game art layer, partner guidance | Design reviewer |
+| Insufficient player throughput to clear the 10k-tile target in a usable window | Medium | High | Minimum-viable-throughput analysis (below) sizes the player base required; recruit/seed players before partner-time-sensitive batches; degrade gracefully by prioritizing freshest tiles | Maintainer |
+| Time-sensitive imagery goes stale before consensus completes | Medium | High | Per-tile freshness deadline + priority queue; expire/return un-cleared time-critical tiles to the partner labeled "unverified in window" rather than shipping late as if fresh | Steward |
 | Scope creep into a general crowdsourcing platform | Medium | Medium | Explicit non-goal; v1 limited to 1–2 vetted datasets | Maintainer |
 | Accessibility neglected under "juice" pressure | Medium | Medium | WCAG 2.2 AA exit criterion in M1; colorblind-safe judgments; audits in CI | Maintainer |
 | Maintainer burnout / abandonment post-M4 | Medium | High | Maintenance rotation, ops runbook, outcome dashboard before declaring done | Maintainer |
@@ -369,13 +438,35 @@ Task JSON for the first M0 task. This section is intentionally just the pointer.
 - **Abuse/misuse prevention:** never trust client-reported correctness; calibration is
   server-side; consensus is reliability-weighted; rate-limit by ephemeral IP; detect coordinated
   voting; quarantine suspect contributors from the consensus weight pool.
+- **Anti-cheat / Sybil threat model (blocking pre-M2-export gate):** because contributors are
+  anonymous and accountless, a single actor can spin up many identities to bias consensus. The
+  threat model and its concrete defenses are a **blocking gate that must pass before any label is
+  exported in M2**:
+  - *Threats:* Sybil flooding (many cheap identities), calibration gaming, coordinated
+    block-voting on targeted tiles, and weight farming via easy gold tiles.
+  - *Calibration burn-in:* a new contributor's judgments **do not count toward consensus weight**
+    until they clear a minimum number of gold tiles at a minimum accuracy (burn-in), so fresh
+    Sybils carry zero influence until they have demonstrably labeled correctly.
+  - *New-contributor weight discount:* even post-burn-in, weight ramps up with a discount factor
+    over sustained accurate volume, capping the damage any single new identity can do.
+  - *Coordinated-voting detection:* monitor for tiles whose minority flips correlate with
+    near-simultaneous, same-shard, or same-network clusters; flag and route to adjudication,
+    and quarantine implicated contributors from the weight pool.
+  - These defenses are exercised by the M2 red-team checks (see TASKS `beacon-anticheat-*`) and
+    the gate must be green before `beacon-export-*` may ship a label.
 - **Secrets handling:** no secrets in client. Any partner/export credentials live only in the
   backend env/secret store — never in logs, receipts, committed files, or label packages (per
   Elyos rule).
 - **PII:** none collected. Anonymous rotating contributor tokens; no accounts required; no
   third-party trackers; IPs ephemeral and never joined to label data.
-- **Data integrity:** server-authoritative gold answers; signed/append-only export log of shipped
-  labels for audit; thresholds recorded per label.
+- **Data integrity & export provenance:** server-authoritative gold answers; signed/append-only
+  export log of shipped labels for audit; thresholds recorded per label. Every exported
+  `LabelRecord`/`ProvenanceRecord` carries a `contentHash` + backend `signature`, so the partner
+  can verify nothing was altered in transit or at rest. Corrections/retractions are issued as
+  signed, append-only `RetractionRecord`s. A **re-export reconciliation flow** lets the partner
+  re-pull a batch and diff by `contentHash`: unchanged labels verify, superseded labels resolve
+  to their latest correction, and retracted labels are flagged for removal — no silent in-place
+  edits ever.
 - **Supply chain:** pinned deps, lockfile, license-check in CI to keep all deps permissive.
 
 ## Sustainability & maintenance
@@ -391,6 +482,16 @@ Task JSON for the first M0 task. This section is intentionally just the pointer.
 
 ## Open questions
 
+- **Minimum-viable-throughput:** clearing the **10k-tile** target requires ~10k × N judgments
+  (≈ 50k judgments at N = 5), plus ~15% gold overhead (≈ 57.5k total). At ~120 real judgments per
+  active player-day (a few short runs), that is ~**420 player-days** of throughput — e.g. ~**60
+  daily-active players over a week**, or ~**30 over two weeks**. This sizes the seed audience we
+  must recruit before promising a partner a delivery window; the analysis must be re-baselined
+  against M1 telemetry (real per-run tile counts) and the actual N/agreement thresholds chosen.
+- **Label freshness for time-sensitive imagery:** post-disaster tiles have a useful-life window;
+  how do we set per-tile freshness deadlines, prioritize the freshest/most-urgent tiles, and
+  decide when an un-cleared time-critical tile is returned to the partner as "unverified in
+  window" rather than shipped late?
 - Which dataset/partner is first — disaster (satellite) or biodiversity (camera-trap)? Each has
   different sensitivity and threshold needs.
 - Exact threshold defaults per dataset (min judgments, min weighted agreement, min calibration
