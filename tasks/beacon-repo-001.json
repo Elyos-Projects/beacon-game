@@ -1,0 +1,33 @@
+{
+  "id": "beacon-repo-001",
+  "title": "Monorepo + pnpm workspaces + CI (build/test/lint)",
+  "project": "beacon-game",
+  "type": "code",
+  "lane": "donated",
+  "priority": "high",
+  "domain": ["software", "games", "open-science"],
+  "riskTier": "low",
+  "urgent": false,
+  "deliverable": "pr",
+  "tokenEstimate": "small",
+  "status": "open",
+  "context": "Beacon is a cooperative signal-tracing roguelite whose one-tap judgments are secretly consensus-verified micro-labels on openly-licensed imagery for disaster-response and biodiversity partners. This is the cold-start foundation task: there is no repo scaffold yet. The codebase must follow Elyos conventions: TypeScript, ESM, pnpm workspaces, with a strict separation between the agent-neutral game/backend core and dataset-specific adapters.",
+  "objective": "Scaffold the pnpm-workspace monorepo with placeholder packages (@beacon/protocol, @beacon/engine, @beacon/consensus, @beacon/backend, @beacon/adapter-*) and a CI pipeline running build, test, and lint, so all later Beacon tasks have a green, reproducible baseline.",
+  "acceptanceCriteria": [
+    "pnpm workspace with packages: @beacon/protocol, @beacon/engine, @beacon/consensus, @beacon/backend, and an example @beacon/adapter-* stub",
+    "TypeScript + ESM configured consistently across packages; shared tsconfig base",
+    "pnpm build && pnpm test && pnpm lint all pass on a clean checkout",
+    "CI workflow runs build/test/lint on push and PR and is green",
+    "MIT LICENSE for code; repo README states the No-Dark-Patterns and open-license constraints; DCO sign-off configured"
+  ],
+  "resources": [
+    "planning/projects/beacon-game/PLAN.md",
+    "governance/proposals/beacon-game.md",
+    "CLAUDE.md",
+    "packages/schema/src/schemas.ts"
+  ],
+  "output": "A PR adding the Beacon monorepo scaffold (pnpm workspaces, package stubs, shared TS/ESM config, lint setup) and a green CI workflow for build/test/lint.",
+  "requestor": "TO BE SECURED",
+  "verifiedNeed": false,
+  "outputLicense": "MIT"
+}
