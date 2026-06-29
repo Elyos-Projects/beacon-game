@@ -1,6 +1,6 @@
 # Beacon — TASKS.md
 
-> Status: Draft · Version: 0.2.0 · Last updated: 2026-06-28 · Owner: TBD (maintainer) · Lane: donated
+> Status: Draft · Version: 0.2 · Last updated: 2026-06-29 · Owner: TBD (maintainer) · Lane: donated
 
 Backlog for **Beacon** (slug: `beacon-game`), an open-source cooperative signal-tracing roguelite
 that produces consensus-verified labels on openly-licensed imagery for disaster-response and
@@ -73,7 +73,7 @@ committed and wired into the review process.
 |---|---|---|---|---|---|---|---|
 | beacon-engine-006 | Combo "juice" + audiovisual feedback (no manipulative timers) | code | medium | low | pr | beacon-engine-003 | Design reviewer |
 | beacon-seed-007 | Deterministic daily global seed + local leaderboard (no account) | code | medium | low | pr | beacon-engine-003 | Maintainer |
-| beacon-a11y-008 | WCAG 2.2 AA on core loop + colorblind-safe judgments | code | medium | low | pr | beacon-engine-006 | Maintainer |
+| beacon-a11y-008 | Game Accessibility Guidelines (Basic+Intermediate) on core loop incl. no-fail/reduced-speed mode + remappable input + colorblind-safe judgments; WCAG 2.2 AA on menus | code | medium | low | pr | beacon-engine-006 | Maintainer |
 | beacon-playtest-009 | Playtest protocol + feedback log (fun without dark patterns) | research | small | low | document | beacon-engine-006 | Design reviewer |
 
 **Acceptance criteria — key tasks**
@@ -83,12 +83,17 @@ committed and wired into the review process.
   - Local leaderboard persists without any account or server identity.
   - No streak/FOMO mechanics; missing a day carries no penalty.
 - **beacon-a11y-008** (accessibility)
-  - Core loop meets WCAG 2.2 AA; judgments distinguishable without color alone.
-  - Keyboard + pointer + touch input all supported; motion-reduction respected.
+  - Core loop meets the **Game Accessibility Guidelines** (Basic + Intermediate); surrounding
+    UI/menus meet WCAG 2.2 AA; judgments distinguishable without color alone.
+  - A **no-fail / reduced-speed / pause-anytime mode** exists so the calibration-miss run-end never
+    gates contribution behind reaction time; input is **remappable**.
+  - Keyboard + pointer + touch input all supported; motion-reduction and flashing limits respected.
 
 **M1 Definition of Done:** game is demonstrably fun and accessible; daily seed + local
-leaderboard work anonymously; AA conformance verified; playtest feedback logged; charter checklist
-passed on all M1 PRs.
+leaderboard work anonymously; **Game Accessibility Guidelines (Basic+Intermediate) on the core loop
+incl. no-fail mode + WCAG 2.2 AA on menus** verified; **explicit contribution-consent UX** present
+and the **fun-vs-accuracy frontier instrumented** (latency×combo vs. gold accuracy); playtest
+feedback logged with survey wording fixed up front; charter checklist passed on all M1 PRs.
 
 ---
 
@@ -110,10 +115,16 @@ passed on all M1 PRs.
   - Ingests judgments via REST/WS; persists to datastore; never trusts client-reported correctness.
   - **Per-contributor tile sharding:** assigns each contributor an independent server-side subset
     of real tiles; only the cosmetic daily seed is shared, the labeling assignment is not.
+  - **Freshness SLAs for time-sensitive (disaster) tiles:** per-tile deadline + priority queue;
+    un-cleared time-critical tiles are returned to the partner as "unverified in window" rather
+    than shipped late as if fresh.
   - Ephemeral-IP rate-limiting; no PII persisted.
 - **beacon-calibration-026** (gold pool + calibration salting)
   - Gold answers held **server-side only**, never sent to the client; salting rate ~15% with
-    ~2–4 gold tiles per run; each gold tile records its answer provenance.
+    ~2–4 gold tiles per run; each gold tile records its answer provenance **and promotion path**.
+  - **Initial gold is expert-seeded**; consensus-promoted gold is capped at a small bounded
+    fraction of the pool (prevents a systematic error self-promoting into gold and enforcing
+    itself); gold answers are **never** generated/set by an LLM.
   - **Anti-memorization:** gold drawn from a large rotating pool, assigned per-contributor
     independent of the shared daily seed, never repeated within a window, retired on exposure.
   - Updates per-contributor rolling reliability weight from gold outcomes.
@@ -126,8 +137,13 @@ passed on all M1 PRs.
   - Red-team test suite passes; **gate must be green before `beacon-export-013` ships any label.**
 - **beacon-dataset-011** (dataset vetting)
   - License confirmed to permit reuse **and derivative labeling**; recorded in repo.
-  - Verified free of identifiable private individuals; provenance documented.
+  - Verified free of identifiable private individuals; provenance documented; **sensitive-content
+    failsafe** applied (mass-grave/casualty/refugee-identifying tiles quarantined, not surfaced).
+  - **Asset-provenance manifest** for bundled fonts/sounds/sprites/shaders in place and the CI
+    license-check extended beyond npm deps to bundled assets.
   - Data/ethics reviewer sign-off recorded before the dataset is enabled.
+  - **One v1 domain chosen** (binary disaster is the default statistical fit); multi-class
+    biodiversity deferred to `beacon-adapter-021` unless its consensus design is specified first.
 - **beacon-export-013** (label export)
   - Only threshold-passing labels exported; each carries complete provenance + CC-BY-SA license +
     **`contentHash` + `signature`** for tamper-evidence.
@@ -168,17 +184,27 @@ audit passes on all new systems; impact receipt MVP reflects real exported label
 
 | ID | Title | Type | Size | Risk | Deliverable | Depends on | Reviewer |
 |---|---|---|---|---|---|---|---|
+| beacon-distribution-029 | Player-acquisition plan + seed channel (embedded-mode + institutional volunteer networks + grant backing) | research | medium | medium | document | — (run in parallel from M0) | Steward + Maintainer |
 | beacon-partner-017 | Secure data partner + data-use agreement + threshold tuning | research | medium | medium | document | — (run in parallel from M0) | Steward |
 | beacon-handoff-018 | First verified-label batch formally accepted by partner | data | medium | medium | dataset | beacon-partner-017, beacon-impact-016 | Steward + Data/ethics reviewer |
 
 **Acceptance criteria — key tasks**
 
+- **beacon-distribution-029** (player acquisition — **runs in parallel from M0**, the biggest
+  unaddressed strategic risk; greenfield game with no audience and deliberately un-juiced growth)
+  - Names a concrete acquisition channel: an **embedded-mode** path (existing open game / itch.io /
+    science-museum / classroom) and/or **institutional volunteer networks** (HOT / Zooniverse /
+    conservation pipelines), co-marketed with the secured partner.
+  - Sizes the seed audience against the throughput model (treating N = 5 as a floor) and the
+    explicit "accept slower delivery as the cost of the ethics stance" resolution.
+  - Identifies grant/institutional backing for post-M4 sustainability (no monetization).
 - **beacon-partner-017** (secure partner — **runs in parallel from M0**, not gated behind M2)
   - "Secured" requires **all three**: signed **DUA** (from the DUA template), a **named
     accountable partner contact**, and a passing **acceptance test** on a sample label batch.
   - Per-dataset thresholds (min judgments, min weighted agreement, min calibration weight) set
-    jointly and recorded; provisional defaults (N ≥ 5, weighted agreement ≥ 0.8) are
-    partner-overridable.
+    jointly and recorded; provisional defaults (**N ≥ 5 as a telemetry-raised floor**, weighted
+    agreement ≥ 0.8) are partner-overridable, with a higher-N hard-tile/rare-class band and N
+    re-baselined from M1 telemetry under correlated error (cf. Serengeti ~27 votes/image).
   - **Fallback** if no partner is secured: self-publish labels CC-BY-SA + commission an external
     spot-check (does not satisfy Definition of Shipped).
 - **beacon-handoff-018** (closed loop)
@@ -214,7 +240,8 @@ owning it after the first delivery.
 | ID | Title | Type | Size | Risk | Deliverable | Notes |
 |---|---|---|---|---|---|---|
 | beacon-consensus-020 | Upgrade consensus to Dawid–Skene / EM estimator | code | large | medium | pr | When data volume supports it; sparsity-aware |
-| beacon-adapter-021 | Second dataset adapter (other domain than first) | code | large | medium | pr | Proves pluggability across domains |
+| beacon-adapter-021 | Second dataset adapter (other domain than first) | code | large | medium | pr | Proves pluggability across domains; if biodiversity, must specify the **multi-class consensus + gold + per-class threshold** design before export |
+| beacon-salting-031 | Adaptive salting (higher gold rate during burn-in, lower for proven contributors) | code | medium | medium | pr | Recovers labeling throughput while keeping Sybil cost high; publish labels-per-judgment efficiency as an ops metric |
 | beacon-i18n-022 | Internationalization + community translations | writing | medium | low | translation | i18n-ready strings already in engine |
 | beacon-pwa-023 | PWA / offline play packaging | code | medium | low | pr | Web-first; no native app |
 | beacon-adversarial-024 | Adversarial-labeling red-team + detection hardening | research | medium | medium | document | Post-M2 hardening that extends the M2 anti-cheat gate (beacon-anticheat-027); stress consensus + calibration defenses |
